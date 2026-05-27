@@ -1,10 +1,8 @@
-import { Redis } from '@upstash/redis'
+import { kv as redis } from '@vercel/kv'
 
-// Singleton — safe in serverless (connection is stateless HTTP anyway)
-export const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-})
+// @vercel/kv reads KV_REST_API_URL + KV_REST_API_TOKEN automatically.
+// Connect via: Vercel Dashboard → Storage → Create Database → KV → link to this project.
+export { redis }
 
 // ─── Key schema ──────────────────────────────────────────────────────────────
 //
