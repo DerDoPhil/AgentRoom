@@ -1,8 +1,12 @@
-import { kv as redis } from '@vercel/kv'
+import { Redis } from '@upstash/redis'
 
-// @vercel/kv reads KV_REST_API_URL + KV_REST_API_TOKEN automatically.
-// Connect via: Vercel Dashboard → Storage → Create Database → KV → link to this project.
-export { redis }
+// Reads UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN automatically.
+// These are set when you install Upstash Redis from Vercel Marketplace and connect
+// it to this project. See: https://vercel.com/marketplace?category=storage&search=redis
+export const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+})
 
 // ─── Key schema ──────────────────────────────────────────────────────────────
 //
