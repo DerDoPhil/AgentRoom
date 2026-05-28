@@ -63,7 +63,10 @@ export async function pushMessage(
   messageTtlSeconds: number
 ): Promise<void> {
   const key = KEYS.roomMessages(roomId)
-  await redis.lpush(key, JSON.stringify(msg))
+  // Store as plain object — @upstash/redis handles JSON serialization automatically.
+  // Do NOT use JSON.stringify here; lrange would then return already-parsed objects
+  // and a second JSON.parse would fail.
+  await redis.lpush(key, msg as unknown as string)
   // Keep last 500 messages per room
   await redis.ltrim(key, 0, 499)
   if (messageTtlSeconds > 0) {
@@ -76,8 +79,9 @@ export async function getMessages(
   limit = 50,
   offset = 0
 ): Promise<Message[]> {
+  // @upstash/redis auto-deserializes JSON → values come back as Message objects directly
   const raw = await redis.lrange(KEYS.roomMessages(roomId), offset, offset + limit - 1)
-  return (raw as string[]).map((r) => JSON.parse(r) as Message)
+  return raw as unknown as Message[]
 }
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
@@ -108,7 +112,8 @@ export async function getSession(token: string): Promise<SessionData | null> {
     pseudonymId: data.pseudonymId as string,
     wallet: data.wallet as string,
     joinedAt: Number(data.joinedAt),
-    isCreator: data.isCreator === 'true',
+    // @upstash/redis auto-parses "true" → boolean true, so check both forms
+    isCreator: data.isCreator === true || data.isCreator === 'true',
   }
 }
 
@@ -167,7 +172,7 @@ function deserializeRoom(d: Record<string, unknown>): RoomConfig {
     rateLimitPerMin: Number(d.rateLimitPerMin),
     maxMembers: Number(d.maxMembers),
     messageTtl: Number(d.messageTtl),
-    readOnly: d.readOnly === 'true',
+    readOnly: d.readOnly === true || d.readOnly === 'true',
     customEntryLamports: Number(d.customEntryLamports),
     createdAt: Number(d.createdAt),
     status: d.status as RoomConfig['status'],
