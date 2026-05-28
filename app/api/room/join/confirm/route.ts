@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
-import { getRoom, saveSession, addMember, getOrCreatePseudonym, getMemberCount, isBanned } from '@/lib/room'
-import { getPendingPayment, consumePendingPayment, verifyPaymentTx } from '@/lib/payment'
+import { getRoom, saveSession, addMember, getOrCreatePseudonym, getMemberCount, isWalletBanned, incrementMemberCount } from '@/lib/room'
+import { getPendingPayment, consumePendingPayment, verifyPaymentTx, claimNonce } from '@/lib/payment'
 import type { SessionData } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -91,8 +91,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Ban check — prevent banned wallets from rejoining
-  // (tokens are banned, but we can also track wallet-level bans in future)
+  // Bug 4 fix: wallet-level ban — second gate in case init was bypassed
+  const walletBanned = await isWalletBanned(roomId, wallet)
+  if (walletBanned) {
+    return NextResponse.json(
+      { error: 'Your wallet has been banned from this room', code: 'WALLET_BANNED' },
+      { status: 403 }
+    )
+  }
+
+  // Bug 2 fix: TOCTOU — atomically claim the nonce before any expensive work.
+  // Prevents two concurrent requests with the same nonce both succeeding.
+  const claimed = await claimNonce(nonce)
+  if (!claimed) {
+    return NextResponse.json(
+      { error: 'This nonce is already being processed', code: 'NONCE_IN_USE' },
+      { status: 409 }
+    )
+  }
 
   // Verify on-chain payment
   const result = await verifyPaymentTx(txSig, wallet, pending.lamports)
@@ -120,6 +136,8 @@ export async function POST(req: NextRequest) {
 
   await saveSession(sessionToken, session)
   await addMember(roomId, sessionToken, pseudonymId)
+  // Bug 1 fix: keep memberCount in sync with actual members hash
+  await incrementMemberCount(roomId, 1)
 
   return NextResponse.json({
     sessionToken,

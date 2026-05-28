@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSession, isBanned, isMember } from './room'
+import { getSession, isBanned, isMember, removeMember, incrementMemberCount } from './room'
 import type { SessionData } from './types'
 
 /**
@@ -24,6 +24,13 @@ export async function requireSession(
 
   const session = await getSession(token)
   if (!session || session.roomId !== roomId) {
+    // Bug 3 fix: lazy cleanup — session expired but member hash entry may still linger.
+    // This keeps memberCount accurate over time without a background sweeper.
+    const stillListed = await isMember(roomId, token)
+    if (stillListed) {
+      await removeMember(roomId, token)
+      await incrementMemberCount(roomId, -1)
+    }
     return {
       error: NextResponse.json(
         { error: 'Invalid or expired session', code: 'INVALID_SESSION' },

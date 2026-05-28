@@ -28,10 +28,12 @@ export const KEYS = {
   roomSecret: (id: string) => `room:${id}:secret`,
   roomMembers: (id: string) => `room:${id}:members`,
   roomBans: (id: string) => `room:${id}:bans`,
+  roomWalletBans: (id: string) => `room:${id}:wallet-bans`,  // Bug 4: wallet-level ban
   roomMessages: (id: string) => `room:${id}:messages`,
   roomRateLimit: (id: string, token: string) => `room:${id}:ratelimit:${token}`,
   session: (token: string) => `session:${token}`,
   pendingPayment: (nonce: string) => `payment:pending:${nonce}`,
+  nonceClaim: (nonce: string) => `payment:claiming:${nonce}`,  // Bug 2: TOCTOU lock
   usedPayment: (txSig: string) => `payment:used:${txSig}`,
   pseudonym: (roomId: string, token: string) => `pseudonym:${roomId}:${token}`,
 }

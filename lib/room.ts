@@ -45,14 +45,28 @@ export async function isMember(roomId: string, token: string): Promise<boolean> 
 
 // ─── Bans ────────────────────────────────────────────────────────────────────
 
-export async function banMember(roomId: string, token: string): Promise<void> {
+export async function banMember(
+  roomId: string,
+  token: string,
+  wallet?: string
+): Promise<void> {
+  // Token-level ban (immediate invalidation)
   await redis.sadd(KEYS.roomBans(roomId), token)
   await redis.hdel(KEYS.roomMembers(roomId), token)
   await redis.del(KEYS.session(token))
+  // Bug 4 fix: wallet-level ban so agent cannot re-enter via a new join/confirm
+  if (wallet) {
+    await redis.sadd(KEYS.roomWalletBans(roomId), wallet)
+  }
 }
 
 export async function isBanned(roomId: string, token: string): Promise<boolean> {
   return (await redis.sismember(KEYS.roomBans(roomId), token)) === 1
+}
+
+/** Bug 4 fix: check if a wallet address is banned from this room */
+export async function isWalletBanned(roomId: string, wallet: string): Promise<boolean> {
+  return (await redis.sismember(KEYS.roomWalletBans(roomId), wallet)) === 1
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────

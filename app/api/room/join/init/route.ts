@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { redis, KEYS } from '@/lib/redis'
-import { getRoom, getMemberCount, PLATFORM_FEE_LAMPORTS } from '@/lib/room'
+import { getRoom, getMemberCount, isWalletBanned, PLATFORM_FEE_LAMPORTS } from '@/lib/room'
 import { createPendingPayment, lamportsToSol } from '@/lib/payment'
 
 export const dynamic = 'force-dynamic'
@@ -75,6 +75,15 @@ export async function POST(req: NextRequest) {
     if (storedSecret !== secret) {
       return NextResponse.json({ error: 'Invalid secret', code: 'WRONG_SECRET' }, { status: 403 })
     }
+  }
+
+  // Bug 4 fix: wallet-level ban — prevent banned agents from re-entering via a fresh join
+  const walletBanned = await isWalletBanned(roomId, wallet)
+  if (walletBanned) {
+    return NextResponse.json(
+      { error: 'Your wallet has been banned from this room', code: 'WALLET_BANNED' },
+      { status: 403 }
+    )
   }
 
   // Max members check

@@ -49,6 +49,18 @@ export async function getPendingPayment(nonce: string): Promise<PendingPayment |
 
 export async function consumePendingPayment(nonce: string): Promise<void> {
   await redis.del(KEYS.pendingPayment(nonce))
+  await redis.del(KEYS.nonceClaim(nonce))
+}
+
+/**
+ * Bug 2 fix — atomically claim a nonce so only ONE concurrent request can process it.
+ * Uses SET NX (only set if not exists) as a distributed lock with 30s TTL.
+ * Returns true if this caller owns the claim, false if another request beat them to it.
+ */
+export async function claimNonce(nonce: string): Promise<boolean> {
+  const result = await redis.set(KEYS.nonceClaim(nonce), '1', { nx: true, ex: 30 })
+  // @upstash/redis returns 'OK' on success, null if NX condition failed
+  return result === 'OK'
 }
 
 // ─── On-chain verification ────────────────────────────────────────────────────

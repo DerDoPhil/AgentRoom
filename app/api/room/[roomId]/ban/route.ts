@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireCreator } from '@/lib/auth'
-import { banMember, isMember, incrementMemberCount } from '@/lib/room'
+import { banMember, isMember, getSession, incrementMemberCount } from '@/lib/room'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -58,7 +58,9 @@ export async function POST(
 
   const wasMember = await isMember(roomId, targetToken)
 
-  await banMember(roomId, targetToken)
+  // Bug 4 fix: look up target's wallet before banning (banMember deletes the session)
+  const targetSession = await getSession(targetToken)
+  await banMember(roomId, targetToken, targetSession?.wallet)
 
   if (wasMember) {
     await incrementMemberCount(roomId, -1)
