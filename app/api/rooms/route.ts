@@ -75,5 +75,5 @@ export async function GET(req: NextRequest) {
       createdAt:       r.createdAt,
     }))
 
-  return NextResponse.json({ rooms: filtered, total: filtered.length })
+  return NextResponse.json({ rooms: filtered, count: filtered.length })
 }

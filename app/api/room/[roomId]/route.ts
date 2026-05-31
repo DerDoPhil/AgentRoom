@@ -12,9 +12,9 @@ export const runtime = 'nodejs'
  *
  * Response 200:
  * {
- *   roomId, visibility, anonymity, topic,
+ *   roomId, visibility, anonymity, name, topic,
  *   rateLimitPerMin, maxMembers, messageTtl,
- *   readOnly, customEntryLamports,
+ *   readOnly, customEntryUsdc,
  *   status, memberCount, createdAt
  * }
  */

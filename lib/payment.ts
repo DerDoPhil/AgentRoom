@@ -32,8 +32,8 @@ export const CREATE_FEE_USDC = 5_000_000
 /** ERC-20 Transfer event topic */
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
-/** Max age of payment TX in seconds (5 minutes) */
-const MAX_TX_AGE_SEC = 300
+/** Max age of payment TX in seconds (15 minutes — allows for Base confirmation + agent retry lag) */
+const MAX_TX_AGE_SEC = 900
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,12 +114,9 @@ export async function verifyX402Payment(
 ): Promise<VerifyResult> {
   const txHash = payment.txHash.toLowerCase()
 
-  // 1. Replay protection
   const usedKey = `x402:used:${txHash}`
-  const alreadyUsed = await redis.exists(usedKey)
-  if (alreadyUsed) return { ok: false, reason: 'TX_ALREADY_USED' }
 
-  // 2. Fetch TX receipt via Base JSON-RPC
+  // 1. Fetch TX receipt via Base JSON-RPC
   let receipt: BaseReceipt | null
   try {
     receipt = await rpcCall<BaseReceipt | null>('eth_getTransactionReceipt', [payment.txHash])
@@ -130,7 +127,7 @@ export async function verifyX402Payment(
   if (!receipt) return { ok: false, reason: 'TX_NOT_FOUND' }
   if (receipt.status !== '0x1') return { ok: false, reason: 'TX_FAILED' }
 
-  // 3. Check TX recency via block timestamp
+  // 2. Check TX recency via block timestamp
   let block: BaseBlock | null
   try {
     block = await rpcCall<BaseBlock | null>('eth_getBlockByHash', [receipt.blockHash, false])
@@ -142,33 +139,36 @@ export async function verifyX402Payment(
   const blockTimeSec = parseInt(block.timestamp, 16)
   const ageSec = Date.now() / 1000 - blockTimeSec
   if (ageSec > MAX_TX_AGE_SEC) {
-    return { ok: false, reason: `TX_EXPIRED: ${Math.round(ageSec)}s ago (max ${MAX_TX_AGE_SEC}s)` }
+    return { ok: false, reason: 'TX_EXPIRED' }
   }
 
-  // 4. Parse ERC-20 Transfer logs for USDC → treasury
-  const treasuryPadded = '0x' + TREASURY_ADDRESS.replace('0x', '').padStart(64, '0')
+  // 3. Parse ERC-20 Transfer logs for USDC → treasury
+  // Verify: correct USDC contract, Transfer event, correct sender (from), correct recipient (treasury)
+  const treasuryPadded = '0x' + TREASURY_ADDRESS.replace('0x', '').padStart(64, '0').toLowerCase()
+  const fromPadded     = '0x' + payment.from.replace('0x', '').toLowerCase().padStart(64, '0')
   const usdcAddress    = USDC_BASE.toLowerCase()
 
   let received = BigInt(0)
   for (const log of receipt.logs) {
     if (
-      log.address.toLowerCase()  === usdcAddress &&
-      log.topics[0]?.toLowerCase() === TRANSFER_TOPIC &&
-      log.topics[2]?.toLowerCase() === treasuryPadded.toLowerCase()
+      log.address.toLowerCase()    === usdcAddress     &&
+      log.topics[0]?.toLowerCase() === TRANSFER_TOPIC  &&
+      log.topics[1]?.toLowerCase() === fromPadded      &&   // Fix: verify sender matches payment.from
+      log.topics[2]?.toLowerCase() === treasuryPadded
     ) {
       received += BigInt(log.data)
     }
   }
 
   if (received < BigInt(requiredUsdc)) {
-    return {
-      ok:     false,
-      reason: `INSUFFICIENT_PAYMENT: received ${received} USDC-units, need ${requiredUsdc}`,
-    }
+    return { ok: false, reason: 'INSUFFICIENT_PAYMENT' }
   }
 
-  // 5. Mark as used (7-day TTL — enough to prevent replay within any reasonable window)
-  await redis.set(usedKey, '1', { ex: TTL.usedPayment })
+  // 4. Atomic replay protection — SET NX (only succeeds if key doesn't exist yet).
+  // Moved to AFTER verification to avoid a non-atomic exists→set race condition.
+  // If two concurrent requests verified the same TX, only one will win the SET NX.
+  const claimed = await redis.set(usedKey, '1', { nx: true, ex: TTL.usedPayment })
+  if (!claimed) return { ok: false, reason: 'TX_ALREADY_USED' }
 
   return { ok: true }
 }

@@ -220,8 +220,8 @@ export async function getOrCreatePseudonym(
   const key = KEYS.pseudonym(roomId, token)
   const existing = await redis.get(key)
   if (existing) return existing as string
-  // Generate stable Agent#XXXX — 4-digit hex derived from token prefix
-  const hex = token.slice(0, 4).toUpperCase()
+  // Generate stable Agent#XXXXXXXX — 8-digit hex derived from token prefix (65k → 4B possibilities)
+  const hex = token.slice(0, 8).toUpperCase()
   const id = `Agent#${hex}`
   await redis.set(key, id)
   return id
