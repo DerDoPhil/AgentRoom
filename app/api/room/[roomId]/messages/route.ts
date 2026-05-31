@@ -125,11 +125,35 @@ export async function POST(
     return NextResponse.json({ error: 'content is required', code: 'EMPTY_CONTENT' }, { status: 400 })
   }
 
+  // Optional structured JSON payload (max 4 KB serialised)
+  let data: Record<string, unknown> | undefined
+  if (body.data !== undefined && body.data !== null) {
+    if (typeof body.data !== 'object' || Array.isArray(body.data)) {
+      return NextResponse.json(
+        { error: 'data must be a JSON object', code: 'INVALID_DATA' },
+        { status: 400 }
+      )
+    }
+    const serialised = JSON.stringify(body.data)
+    if (serialised.length > 4096) {
+      return NextResponse.json(
+        { error: 'data payload exceeds 4096 bytes', code: 'DATA_TOO_LARGE' },
+        { status: 400 }
+      )
+    }
+    data = body.data as Record<string, unknown>
+  }
+
+  // Optional thread reply
+  const replyTo = typeof body.replyTo === 'string' ? body.replyTo : undefined
+
   const msg: Message = {
     id: uuidv4(),
     sender: room.anonymity === 'full' ? null : session.pseudonymId,
     content,
     ts: Date.now(),
+    ...(data    !== undefined && { data }),
+    ...(replyTo !== undefined && { replyTo }),
   }
 
   await pushMessage(roomId, msg, room.messageTtl)

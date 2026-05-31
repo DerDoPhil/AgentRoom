@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSession, requireCreator } from '@/lib/auth'
-import { getRoom, saveRoom, removeMember } from '@/lib/room'
+import { getRoom, saveRoom, removeMember, deregisterPublicRoom } from '@/lib/room'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -64,6 +64,9 @@ export async function DELETE(
 
   room.status = 'closed'
   await saveRoom(room)
+
+  // Remove from public discovery index
+  await deregisterPublicRoom(roomId)
 
   return NextResponse.json({ closed: true, roomId })
 }

@@ -1,12 +1,12 @@
 import { redis, KEYS, TTL } from './redis'
 import type { RoomConfig, Message, SessionData } from './types'
 
-// ─── Platform fee ─────────────────────────────────────────────────────────────
-/** Base platform fee in lamports per room join (0.002 SOL) */
-export const PLATFORM_FEE_LAMPORTS = 2_000_000
+// ─── Platform fee (USDC on Base, 6 decimals) ──────────────────────────────────
+/** $1.00 USDC to join a room */
+export const JOIN_FEE_USDC   = 1_000_000
 
-/** Creator fee in lamports (0 = free to create a room) */
-export const CREATE_FEE_LAMPORTS = 0
+/** $5.00 USDC to create a room */
+export const CREATE_FEE_USDC = 5_000_000
 
 // ─── Room CRUD ────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,50 @@ export async function getRoom(roomId: string): Promise<RoomConfig | null> {
 
 export async function saveRoom(room: RoomConfig): Promise<void> {
   await redis.hset(KEYS.room(room.roomId), serializeRoom(room))
+}
+
+// ─── Public room discovery ────────────────────────────────────────────────────
+
+/**
+ * Register a newly created public room in the global discovery sorted set.
+ * Score = createdAt ms so that rooms are ordered newest-first when reversed.
+ */
+export async function registerPublicRoom(roomId: string, createdAt: number): Promise<void> {
+  await redis.zadd(KEYS.publicRooms(), { score: createdAt, member: roomId })
+}
+
+/**
+ * Remove a room from the public discovery index (e.g. when closed or made private).
+ */
+export async function deregisterPublicRoom(roomId: string): Promise<void> {
+  await redis.zrem(KEYS.publicRooms(), roomId)
+}
+
+/**
+ * List public open rooms, newest first.
+ * @param limit   max rooms to return (default 20, max 50)
+ * @param offset  pagination offset (default 0)
+ */
+export async function listPublicRooms(
+  limit  = 20,
+  offset = 0
+): Promise<RoomConfig[]> {
+  const cappedLimit = Math.min(limit, 50)
+  // ZREVRANGE: highest score first (newest rooms first)
+  const ids = await redis.zrange(
+    KEYS.publicRooms(),
+    offset,
+    offset + cappedLimit - 1,
+    { rev: true }
+  ) as string[]
+
+  if (!ids.length) return []
+
+  // Fetch all rooms in parallel, filter out closed/missing rooms
+  const rooms = await Promise.all(ids.map((id) => getRoom(id)))
+  return rooms.filter(
+    (r): r is RoomConfig => r !== null && r.status === 'open'
+  )
 }
 
 export async function incrementMemberCount(roomId: string, delta: number): Promise<void> {
@@ -98,6 +142,31 @@ export async function getMessages(
   return raw as unknown as Message[]
 }
 
+// ─── Pinned messages ─────────────────────────────────────────────────────────
+
+const MAX_PINS = 5
+
+/**
+ * Pin a message (creator only — enforced in route, not here).
+ * Stores message IDs in a Redis list, newest pin first.
+ * Max MAX_PINS pinned messages per room.
+ */
+export async function pinMessage(roomId: string, messageId: string): Promise<void> {
+  const key = KEYS.roomPins(roomId)
+  await redis.lpush(key, messageId)
+  await redis.ltrim(key, 0, MAX_PINS - 1)
+}
+
+/** Remove a pin */
+export async function unpinMessage(roomId: string, messageId: string): Promise<void> {
+  await redis.lrem(KEYS.roomPins(roomId), 0, messageId)
+}
+
+/** Get pinned message IDs (newest pin first) */
+export async function getPinnedMessageIds(roomId: string): Promise<string[]> {
+  return (await redis.lrange(KEYS.roomPins(roomId), 0, MAX_PINS - 1)) as string[]
+}
+
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 
 /**
@@ -165,12 +234,14 @@ function serializeRoom(r: RoomConfig): Record<string, string | number> {
     roomId: r.roomId,
     visibility: r.visibility,
     anonymity: r.anonymity,
+    name: r.name,
     topic: r.topic,
+    freeJoin: String(r.freeJoin ?? false),
     rateLimitPerMin: r.rateLimitPerMin,
     maxMembers: r.maxMembers,
     messageTtl: r.messageTtl,
     readOnly: String(r.readOnly),
-    customEntryLamports: r.customEntryLamports,
+    customEntryUsdc: r.customEntryUsdc,
     createdAt: r.createdAt,
     status: r.status,
     memberCount: r.memberCount,
@@ -182,12 +253,14 @@ function deserializeRoom(d: Record<string, unknown>): RoomConfig {
     roomId: d.roomId as string,
     visibility: d.visibility as RoomConfig['visibility'],
     anonymity: d.anonymity as RoomConfig['anonymity'],
+    name: (d.name as string) ?? '',
     topic: (d.topic as string) ?? '',
+    freeJoin: d.freeJoin === true || d.freeJoin === 'true',
     rateLimitPerMin: Number(d.rateLimitPerMin),
     maxMembers: Number(d.maxMembers),
     messageTtl: Number(d.messageTtl),
     readOnly: d.readOnly === true || d.readOnly === 'true',
-    customEntryLamports: Number(d.customEntryLamports),
+    customEntryUsdc: Number(d.customEntryUsdc) || 0,  // NaN-safe: old rooms had customEntryLamports
     createdAt: Number(d.createdAt),
     status: d.status as RoomConfig['status'],
     memberCount: Number(d.memberCount),
